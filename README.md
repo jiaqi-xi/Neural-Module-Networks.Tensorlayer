@@ -29,7 +29,7 @@ This project refered to" [Learning to Reason: End-to-End Module Networks for Vis
 `pip install tensorlayer==1.4.1`
 5. Install cuda & cudnn (in Anaconda): 
 `connda install cuda`
-`connda install cudnn`
+`connda install cudnn==5.1`
 5. Download this or clone with Git, and then enter the root directory of the repository:  
 `git clone https://github.com/jiaqi-xi/Neural-Module-Networks.Tensorlayer.git`
 
