@@ -3,7 +3,7 @@
 A tensorlayer implementation of Neural Module Networks.
 
 
-# Learning to Reason: End-to-End Module Networks for Visual Question Answering
+## Learning to Reason: End-to-End Module Networks for Visual Question Answering
 
 This project refered to" [Learning to Reason: End-to-End Module Networks for Visual Question Answering](https://github.com/ronghanghu/n2nmn)" and implemented the model with tensorlayer. It contains the code for the following paper (with tests on the SHAPES dataset):
 
