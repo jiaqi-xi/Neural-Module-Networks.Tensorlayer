@@ -27,29 +27,13 @@ def conv_layer(name, bottom, kernel_size, stride, output_dim, padding='SAME',
             tf.add_to_collection(tf.GraphKeys.REGULARIZATION_LOSSES,
                                  tf.nn.l2_loss(weights))
 
-    """
-    # conv = tf.nn.conv2d(bottom, filter=weights,
-          # strides=[1, stride, stride, 1], padding=padding)
+    
+    conv = tf.nn.conv2d(bottom, filter=weights,
+          strides=[1, stride, stride, 1], padding=padding)
     if bias_term:
-        # conv = tf.nn.bias_add(conv, biases)
-        net = tl.layers.InputLayer(inputs=bottom, name=name+'input')
-        conv = tl.layers.Conv2dLayer(net, act=tf.identity, shape=[kernel_size, kernel_size, input_dim, output_dim],
-                               strides=[1, stride, stride, 1],
-                               padding=padding, W_init=weights_initializer, b_init=biases_initializer,
-                               name=name+'conv2d')
+        conv = tf.nn.bias_add(conv, biases)
 
-    else:
-        conv = tl.layers.Conv2dLayer(net, act=tf.identity, shape=[kernel_size, kernel_size, input_dim, output_dim],
-                               strides=[1, stride, stride, 1],
-                               padding=padding, W_init=weights_initializer, 
-                               name=name+'conv2d')
-    """
-    net = tl.layers.InputLayer(inputs=bottom, name=name+'input')
-    conv = tl.layers.Conv2dLayer(net, act=tf.identity, shape=[kernel_size, kernel_size, input_dim, output_dim],
-                               strides=[1, stride, stride, 1],
-                               padding=padding, W_init=weights_initializer, b_init=biases_initializer,
-                               name=name+'conv2d')
-    return conv.outputs
+    return conv
 
 def conv_relu_layer(name, bottom, kernel_size, stride, output_dim, padding='SAME',
                     bias_term=True, weights_initializer=None, biases_initializer=None, reuse=None):
@@ -84,25 +68,8 @@ def deconv_layer(name, bottom, kernel_size, stride, output_dim, padding='SAME',
         if not reuse:
             tf.add_to_collection(tf.GraphKeys.REGULARIZATION_LOSSES,
                                  tf.nn.l2_loss(weights))
-
-    #deconv = tf.nn.conv2d_transpose(bottom, filter=weights,
-        #output_shape=output_shape, strides=[1, stride, stride, 1],
-        #padding=padding)
     net = tl.layers.InputLayer(inputs=bottom, name=name+'input')
-    """
-    if bias_term:
-        #deconv = tf.nn.bias_add(deconv, biases)
-        deconv = tl.layers.DeConv2dLayer(net, act=tf.identity, shape=[kernel_size, kernel_size, output_dim, input_dim],
-                               output_shape=output_shape, strides=[1, stride, stride, 1],
-                               padding=padding, W_init=weights_initializer, b_init=biases_initializer,
-                               name=name+'deconv2d')
-
-    else:
-        deconv = tl.layers.DeConv2dLayer(net, act=tf.identity, shape=[kernel_size, kernel_size, output_dim, input_dim],
-                               output_shape=output_shape, strides=[1, stride, stride, 1],
-                               padding=padding, W_init=weights_initializer,
-                               name=name+'deconv2d')
-    """
+    
     deconv = tl.layers.DeConv2dLayer(net, act=tf.identity, shape=[kernel_size, kernel_size, output_dim, input_dim],
                                output_shape=output_shape, strides=[1, stride, stride, 1],
                                padding=padding, W_init=weights_initializer, b_init=biases_initializer,
