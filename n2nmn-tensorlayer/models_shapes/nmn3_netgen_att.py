@@ -2,11 +2,12 @@ from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
 from tensorflow import convert_to_tensor as to_T
+import tensorlayer as tl
 
 from util.cnn import fc_layer as fc, conv_relu_layer as conv_relu
 
 def _get_lstm_cell(num_layers, lstm_dim, apply_dropout):
-    if isinstance(lstm_dim, list):  # Different layers have different dimensions
+    if isinstance(lstm_dim, list):  # list_dim is a list --> Different layers have different dimensions
         if not len(lstm_dim) == num_layers:
             raise ValueError('the length of lstm_dim must be equal to num_layers')
         cell_list = []
@@ -16,11 +17,11 @@ def _get_lstm_cell(num_layers, lstm_dim, apply_dropout):
             # The output of the last layer has no dropout
             if apply_dropout and l < num_layers-1:
                 dropout_cell = tf.contrib.rnn.DropoutWrapper(lstm_cell,
-                    output_keep_prob=0.5)
+                                                            output_keep_prob=0.5)
             else:
                 dropout_cell = lstm_cell
             cell_list.append(dropout_cell)
-    else:  # All layers has the same dimension.
+    else:  # All layers are of the same dimension.
         lstm_cell = tf.contrib.rnn.BasicLSTMCell(lstm_dim, state_is_tuple=True)
         # Dropout is only applied on output of the 1st to second-last layer.
         # The output of the last layer has no dropout
@@ -86,9 +87,9 @@ class AttentionSeq2Seq:
             # transform the encoder outputs for further attention alignments
             # encoder_outputs_flat has shape [T, N, lstm_dim]
             encoder_h_transformed = fc('encoder_h_transform',
-                tf.reshape(encoder_outputs, [-1, lstm_dim]), output_dim=lstm_dim)
-            encoder_h_transformed = tf.reshape(encoder_h_transformed,
-                                               to_T([T, N, lstm_dim]))
+                tl.layers.ReshapeLayer(layer=encoder_outputs, shape=[-1, lstm_dim]).outputs, output_dim=lstm_dim)
+            encoder_h_transformed = tl.layers.ReshapeLayer(encoder_h_transformed,
+                                               to_T([T, N, lstm_dim])).outputs
             self.encoder_h_transformed = encoder_h_transformed
 
             # seq_not_finished is a shape [T, N, 1] tensor, where seq_not_finished[t, n]
@@ -109,7 +110,7 @@ class AttentionSeq2Seq:
         # are the outputs from previous time step
         # num_vocab does not include <go>
         #
-        # use_gt_layout is None or a bool tensor, and gt_layout_batch is a tenwor
+        # use_gt_layout is None or a bool tensor, and gt_layout_batch is a tensor
         # with shape [T_max, N].
         # If use_gt_layout is not None, then when use_gt_layout is true, predict
         # exactly the tokens in gt_layout_batch, regardless of actual probability.
@@ -155,7 +156,7 @@ class AttentionSeq2Seq:
             all_eos_pred = EOS_token * tf.ones(to_T([N]), tf.int32)
             all_one_prob = tf.ones(to_T([N]), tf.float32)
             all_zero_entropy = tf.zeros(to_T([N]), tf.float32)
-            if use_gt_layout is not None:
+            if use_gt_layout is not None:   # 1/0 to decide whether to use gt or pred layout
                 gt_layout_mult = tf.cast(use_gt_layout, tf.int32)
                 pred_layout_mult = 1 - gt_layout_mult
             def loop_fn(time, cell_output, cell_state, loop_state):
@@ -170,7 +171,7 @@ class AttentionSeq2Seq:
                     att_raw = tf.reduce_sum(
                         tf.tanh(tf.nn.xw_plus_b(cell_output, W_a, b_a) +
                                 self.encoder_h_transformed) * v,
-                        axis=2, keep_dims=True)
+                                axis=2, keep_dims=True)
                     # softmax along the first dimension (T) over not finished examples
                     # att has shape [T, N, 1]
                     att = tf.nn.softmax(att_raw, dim=0)*self.seq_not_finished
@@ -201,7 +202,7 @@ class AttentionSeq2Seq:
                     # [N, num_vocab]
                     # mask has shape [N, num_vocab]
                     mask = tf.equal(mask_range, tf.reshape(predicted_token, [-1, 1]))
-                    all_token_probs = tf.nn.softmax(token_scores)
+                    all_token_probs = tl.activation.pixel_wise_softmax(token_scores)
                     token_prob = tf.reduce_sum(all_token_probs *
                                                tf.cast(mask, tf.float32), axis=1)
                     neg_entropy = tf.reduce_sum(all_token_probs *
