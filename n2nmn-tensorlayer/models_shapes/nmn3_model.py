@@ -2,6 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 import numpy as np
 import tensorflow as tf
+import tensorlayer as tl
 import tensorflow_fold as td
 from tensorflow import convert_to_tensor as to_T
 
@@ -27,7 +28,7 @@ class NMN3ModelAtt:
                 image_feat_grid = shapes_convnet(image_batch)
                 self.image_feat_grid = image_feat_grid
 
-            # Part 1: Seq2seq RNN to generate module layout tokensa
+            # Part 1: Seq2seq RNN to generate module layout tokens
             with tf.variable_scope('layout_generation'):
                 att_seq2seq = nmn3_netgen_att.AttentionSeq2Seq(text_seq_batch,
                     seq_length_batch, T_decoder, num_vocab_txt,
