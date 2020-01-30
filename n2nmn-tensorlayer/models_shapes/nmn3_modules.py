@@ -2,6 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 import numpy as np
 import tensorflow as tf
+import tensorlayer as tl
 from tensorflow import convert_to_tensor as to_T
 
 from util.cnn import fc_layer as fc, conv_layer as conv
@@ -56,8 +57,13 @@ class Modules:
 
             text_param_mapped = fc('fc_text', text_param, output_dim=map_dim)
             text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
-
-            eltwise_mult = tf.nn.l2_normalize(image_feat_mapped * text_param_mapped, 3)
+#########################
+            #eltwise_mult = tf.nn.l2_normalize(image_feat_mapped * text_param_mapped, 3)
+            #with ops.name_scope(name, "l2_normalize", [x]) as name:
+            x=image_feat_mapped * text_param_mapped
+            square_sum = math_ops.reduce_sum(math_ops.square(x), 3, keep_dims=True)
+            x_inv_norm = math_ops.rsqrt(math_ops.maximum(square_sum, 1e-12))
+            eltwise_mult = math_ops.multiply(x, x_inv_norm,name=None)
             att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
 
             # TODO
@@ -95,7 +101,12 @@ class Modules:
             text_param_mapped = fc('text_fc', text_param, output_dim=map_dim)
             text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
 
-            eltwise_mult = tf.nn.l2_normalize(att_maps * text_param_mapped, 3)
+######################
+            #eltwise_mult = tf.nn.l2_normalize(att_maps * text_param_mapped, 3)
+            x=att_maps * text_param_mapped
+            square_sum = math_ops.reduce_sum(math_ops.square(x), 3, keep_dims=True)
+            x_inv_norm = math_ops.rsqrt(math_ops.maximum(square_sum, 1e-12))
+            eltwise_mult = math_ops.multiply(x, x_inv_norm,name=None)
             att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
 
         return att_grid
@@ -139,10 +150,25 @@ class Modules:
             N = att_shape[0]
             H = att_shape[1]
             W = att_shape[2]
-
-            att_min = tf.reduce_min(att_grid, axis=[1, 2])
-            att_avg = tf.reduce_mean(att_grid, axis=[1, 2])
-            att_max = tf.reduce_max(att_grid, axis=[1, 2])
+##################
+            #att_min = tf.reduce_min(att_grid, axis=[1, 2])
+            att_min = gen_math_ops._min(
+                att_grid,
+                _ReductionDims(att_grid, [1, 2], None),
+                False,
+                None)
+            #att_avg = tf.reduce_mean(att_grid, axis=[1, 2])
+            att_avg = gen_math_ops._mean(
+                att_grid,
+                _ReductionDims(att_grid, [1, 2], None),
+                False,
+                None)
+            #att_max = tf.reduce_max(att_grid, axis=[1, 2])
+            att_max = gen_math_ops._max(
+                att_grid,
+                _ReductionDims(att_grid, [1, 2], None),
+                False,
+                None)
             # att_reduced has shape [N, 3]
             att_reduced = tf.concat([att_min, att_avg, att_max], axis=1)
             scores = fc('fc_scores', att_reduced, output_dim=self.num_choices)
@@ -171,7 +197,14 @@ def _1x1_conv(name, bottom, output_dim, reuse=None):
         biases = tf.get_variable('biases', output_dim,
             initializer=biases_initializer)
 
-        conv_flat = tf.nn.xw_plus_b(bottom_flat, weights, biases)
+        #conv_flat = tf.nn.xw_plus_b(bottom_flat, weights, biases)
+        #with ops.name_scope(name, "xw_plus_b", [x, weights, biases]) as name:
+###################
+        bottom_flat = ops.convert_to_tensor(bottom_flat, name="bottom_flat")
+        weights = ops.convert_to_tensor(weights, name="weights")
+        biases = ops.convert_to_tensor(biases, name="biases")
+        mm = math_ops.matmul(bottom_flat, weights)
+        conv_flat = bias_add(mm, biases, name=name)
         conv = tf.reshape(conv_flat, to_T([N, H, W, output_dim]))
 
     return conv
@@ -191,11 +224,11 @@ def _conv(name, bottom, kernel_size, stride, output_dim, padding='SAME',
 @tf.RegisterGradient('Conv2D_handle_empty_batch')
 def _Conv2DGrad(op, grad):
     with tf.device('/cpu:0'):
-        return [tf.nn.conv2d_backprop_input(
+        return [tf.nn.conv2d_backprop_input(#计算相对于输入的卷积梯度.
                 tf.shape(op.inputs[0]), op.inputs[1], grad, op.get_attr('strides'),
                 op.get_attr('padding'), op.get_attr('use_cudnn_on_gpu'),
                 op.get_attr('data_format')),
-                tf.nn.conv2d_backprop_filter(op.inputs[0],
+                tf.nn.conv2d_backprop_filter(op.inputs[0],#计算相对于滤波器的卷积梯度.
                                              tf.shape(op.inputs[1]), grad,
                                              op.get_attr('strides'),
                                              op.get_attr('padding'),
