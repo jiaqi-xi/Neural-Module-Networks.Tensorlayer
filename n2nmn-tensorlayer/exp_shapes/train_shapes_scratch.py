@@ -9,9 +9,8 @@ gpu_id = args.gpu_id  # set GPU id to use
 import os; os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
 import numpy as np
-# import tensorflow as tf
-import tensorflow.compat.v1 as tf
-tf.disable_v2_behavior()
+import tensorflow as tf
+import tensorlayer as tl
 # Start the session BEFORE importing tensorflow_fold
 # to avoid taking up all GPU memory
 sess = tf.Session(config=tf.ConfigProto(
@@ -142,8 +141,11 @@ scores = nmn3_model.scores
 log_seq_prob = nmn3_model.log_seq_prob
 
 # Loss function
-softmax_loss_per_sample = tf.nn.sparse_softmax_cross_entropy_with_logits(
-    logits=scores, labels=vqa_label_batch)
+#softmax_loss_per_sample = tf.nn.sparse_softmax_cross_entropy_with_logits(#tl.cost.cross_entropy_seq_with_mask 计算交叉熵
+#    logits=scores, labels=vqa_label_batch)
+#################
+softmax_loss_per_sample  = tl.cost.cross_entropy(scores,vqa_label_batch)
+
 # The final per-sample loss, which is vqa loss for valid expr
 # and invalid_expr_loss for invalid expr
 final_loss_per_sample = tf.where(expr_validity_batch,
