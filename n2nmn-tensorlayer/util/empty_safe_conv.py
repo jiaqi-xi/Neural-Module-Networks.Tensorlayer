@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
+import tensorlayer as tl
 from tensorflow import convert_to_tensor as to_T
 
 from util.cnn import conv_layer as conv
