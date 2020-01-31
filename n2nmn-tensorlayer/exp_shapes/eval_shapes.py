@@ -1,6 +1,10 @@
 from __future__ import absolute_import, division, print_function
-
+import numpy as np
+import tensorflow as tf
 import argparse
+import tensorlayer as tl
+
+# Initialize argparser
 parser = argparse.ArgumentParser()
 parser.add_argument('--exp_name', required=True)
 parser.add_argument('--snapshot_name', required=True)
@@ -9,10 +13,10 @@ parser.add_argument('--gpu_id', type=int, default=0)
 args = parser.parse_args()
 
 gpu_id = args.gpu_id  # set GPU id to use
-import os; os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+import os; 
+os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
-import numpy as np
-import tensorflow as tf
+
 # Start the session BEFORE importing tensorflow_fold
 # to avoid taking up all GPU memory
 sess = tf.Session(config=tf.ConfigProto(
@@ -24,6 +28,7 @@ from models_shapes.nmn3_assembler import Assembler
 from models_shapes.nmn3_model import NMN3ModelAtt
 
 # Module parameters
+# same as train_shapes_gt_layout except True/False
 H_im = 30
 W_im = 30
 num_choices = 2
@@ -67,16 +72,14 @@ assembler = Assembler(vocab_layout_file)
 num_vocab_nmn = len(assembler.module_names)
 
 # Load training data
-training_questions = []
-training_labels = []
 training_images_list = []
 gt_layout_list = []
 
 for image_set in image_sets:
     with open(training_text_files % image_set) as f:
-        training_questions += [l.strip() for l in f.readlines()]
+        training_questions = [l.strip() for l in f.readlines()]
     with open(training_label_files % image_set) as f:
-        training_labels += [l.strip() == 'true' for l in f.readlines()]
+        training_labels = [l.strip() == 'true' for l in f.readlines()]
     training_images_list.append(np.load(training_image_files % image_set))
     with open(training_gt_layout_file % image_set) as f:
             gt_layout_list += json.load(f)
@@ -86,7 +89,7 @@ training_images = np.concatenate(training_images_list)
 
 # Shuffle the training data
 # fix random seed for data repeatibility
-np.random.seed(3)
+np.random.seed(2)
 shuffle_inds = np.random.permutation(num_questions)
 
 training_questions = [training_questions[idx] for idx in shuffle_inds]
@@ -120,8 +123,10 @@ image_batch = tf.placeholder(tf.float32, [None, H_im, W_im, 3])
 expr_validity_batch = tf.placeholder(tf.bool, [None])
 
 # The model
-nmn3_model = NMN3ModelAtt(image_batch, text_seq_batch,
-    seq_length_batch, T_decoder=T_decoder,
+nmn3_model = NMN3ModelAtt(image_batch=image_batch, 
+    text_seq_batch=text_seq_batch,
+    seq_length_batch=seq_length_batch,
+    T_decoder=T_decoder,
     num_vocab_txt=num_vocab_txt, embed_dim_txt=embed_dim_txt,
     num_vocab_nmn=num_vocab_nmn, embed_dim_nmn=embed_dim_nmn,
     lstm_dim=lstm_dim,
@@ -136,12 +141,13 @@ scores = nmn3_model.scores
 
 snapshot_saver = tf.train.Saver()
 
-sess.run(tf.global_variables_initializer())
+tl.layers.initialize_global_variables(sess)
 snapshot_saver.restore(sess, snapshot_file)
 
 answer_correct = 0
 layout_correct = 0
 layout_valid = 0
+
 for n_iter in range(int(num_batches)):
     n_begin = int((n_iter % num_batches)*N)
     n_end = int(min(n_begin+N, num_questions))
@@ -157,6 +163,29 @@ for n_iter in range(int(num_batches)):
         feed_dict={text_seq_batch: text_seq_array[:, n_begin:n_end],
                    seq_length_batch: seq_length_array[n_begin:n_end],
                    image_batch: image_array[n_begin:n_end]})
+    dict_l = {text_seq_batch: text_seq_array[:, n_begin:n_end],
+                   seq_length_batch: seq_length_array[n_begin:n_end],
+                   image_batch: image_array[n_begin:n_end]}
+
+    # Define first layer
+    class Layer1(Layer):
+        def __init__(
+            self,
+            layer = None,
+            name = 'layer1',
+        ):
+            Layer.__init(self, name=name)
+            self.inputs = layer.outputs
+            self.outputs = nmn3_model.predicted_tokens(self.inputs)
+
+            self.all_layers = list(layer.all_layers)
+            self.all_params = list(layer.all_params)
+            self.all_drop = dict(layer.all_drop)
+            self.all_layers.extend( [self.outputs] )
+
+    # Construct network
+    network = tl.layers.InputLayer(inputs=dict_l, name='input_layer')
+    network = tl.layers.Layer1(network) # or Layer1?
 
     # compute the accuracy of the predicted layout
     gt_tokens = gt_layout_array[:, n_begin:n_end]
@@ -175,11 +204,31 @@ for n_iter in range(int(num_batches)):
     # Part 2: Run NMN and learning steps
     scores_val = sess.partial_run(h, scores, feed_dict=expr_feed)
 
+    # Define second layer
+    class Layer2(Layer, dict_l):
+        def __init__(
+            self,
+            layer = None,
+            name = 'layer2',
+        ):
+            Layer.__init(self, name=name)
+            self.inputs = layer.outputs
+            self.outputs = scores(dict_l)
+
+            self.all_layers = list(layer.all_layers)
+            self.all_params = list(layer.all_params)
+            self.all_drop = dict(layer.all_drop)
+            self.all_layers.extend( [self.outputs] )
+
+    # Construct network
+    network = Layer2(network, expr_feed)
+
     # compute accuracy
     predictions = np.argmax(scores_val, axis=1)
     answer_correct += np.sum(np.logical_and(expr_validity_array,
                                             predictions == labels))
 
+# Print effectiveness to cmd and file
 answer_accuracy = answer_correct / num_questions
 layout_accuracy = layout_correct / num_questions
 layout_validity = layout_valid / num_questions
