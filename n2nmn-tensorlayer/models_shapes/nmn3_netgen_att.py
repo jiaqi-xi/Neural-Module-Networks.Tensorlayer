@@ -7,39 +7,50 @@ import tensorlayer as tl
 from util.cnn import fc_layer as fc, conv_relu_layer as conv_relu
 
 def _get_lstm_cell(num_layers, lstm_dim, apply_dropout):
-    if isinstance(lstm_dim, list):  # list_dim is a list --> Different layers have different dimensions
+	
+	# Input:
+	# 	num_layers: the number of layers
+	#	lstm_dim: a list of dim of each layer, a number if they share the same dim
+	#	apply_dropout: bool, only applied on output of the 1st to second-last layer
+	#
+	# Output:
+	# 	a MultiRNNCell cell_layers built by given info
+
+    # list_dim is a list --> Different layers have different dimensions.
+    if isinstance(lstm_dim, list):  
         if not len(lstm_dim) == num_layers:
             raise ValueError('the length of lstm_dim must be equal to num_layers')
         cell_list = []
+
         for l in range(num_layers):
-            lstm_cell = tf.contrib.rnn.BasicLSTMCell(lstm_dim[l], state_is_tuple=True)
-            # Dropout is only applied on output of the 1st to second-last layer.
-            # The output of the last layer has no dropout
+            lstm_cell = tf.contrib.rnn.BasicLSTMCell(lstm_dim[l])
+
             if apply_dropout and l < num_layers-1:
                 dropout_cell = tf.contrib.rnn.DropoutWrapper(lstm_cell,
                                                             output_keep_prob=0.5)
+                cell_list.append(dropout_cell)
             else:
-                dropout_cell = lstm_cell
-            cell_list.append(dropout_cell)
-    else:  # All layers are of the same dimension.
-        lstm_cell = tf.contrib.rnn.BasicLSTMCell(lstm_dim, state_is_tuple=True)
-        # Dropout is only applied on output of the 1st to second-last layer.
-        # The output of the last layer has no dropout
+                cell_list.append(lstm_cell)
+
+    # All layers are of the same dimension.
+    else:  
+        lstm_cell = tf.contrib.rnn.BasicLSTMCell(lstm_dim)
         if apply_dropout:
             dropout_cell = tf.contrib.rnn.DropoutWrapper(lstm_cell,
                                                          output_keep_prob=0.5)
+            cell_list = [dropout_cell] * (num_layers-1) + [lstm_cell]
         else:
-            dropout_cell = lstm_cell
-        cell_list = [dropout_cell] * (num_layers-1) + [lstm_cell]
+        	cell_list = [lstm_cell] * (num_layers)
 
-    cell = tf.contrib.rnn.MultiRNNCell(cell_list, state_is_tuple=True)
-    return cell
+    cell_layers = tf.contrib.rnn.MultiRNNCell(cell_list)
+    return cell_layers
+
 
 class AttentionSeq2Seq:
     def __init__(self, input_seq_batch, seq_length_batch, T_decoder,
         num_vocab_txt, embed_dim_txt, num_vocab_nmn, embed_dim_nmn,
         lstm_dim, num_layers, EOS_token, encoder_dropout, decoder_dropout,
-        decoder_sampling, use_gt_layout=None, gt_layout_batch=None,
+        decoder_sampling, gt_layout_batch=None,
         scope='encoder_decoder', reuse=None):
         self.T_decoder = T_decoder
         self.encoder_num_vocab = num_vocab_txt
@@ -55,7 +66,7 @@ class AttentionSeq2Seq:
 
         with tf.variable_scope(scope, reuse=reuse):
             self._build_encoder(input_seq_batch, seq_length_batch)
-            self._build_decoder(use_gt_layout, gt_layout_batch)
+            self._build_decoder(gt_layout_batch)
 
     def _build_encoder(self, input_seq_batch, seq_length_batch, scope='encoder',
         reuse=None):
@@ -64,58 +75,48 @@ class AttentionSeq2Seq:
         apply_dropout = self.encoder_dropout
 
         with tf.variable_scope(scope, reuse=reuse):
-            T = tf.shape(input_seq_batch)[0]
-            N = tf.shape(input_seq_batch)[1]
-            self.T_encoder = T
-            self.N = N
+            self.T_encoder = tf.shape(input_seq_batch)[0]
+            self.N = tf.shape(input_seq_batch)[1]
+
+            # Step 1: Embedding the input seq
             embedding_mat = tf.get_variable('embedding_mat',
                 [self.encoder_num_vocab, self.encoder_embed_dim])
-            # text_seq has shape [T, N] and embedded_seq has shape [T, N, D].
-            embedded_seq = tf.nn.embedding_lookup(embedding_mat, input_seq_batch)
-            self.embedded_input_seq = embedded_seq
+            # input_seq_batch has shape [T, N] and embedded_input_seq has shape [T, N, D].
+            # now apply the embedding to input seq batch
+            self.embedded_input_seq = tf.nn.embedding_lookup(embedding_mat, input_seq_batch)
 
-            # The RNN
-            cell = _get_lstm_cell(num_layers, lstm_dim, apply_dropout)
-
+            # Step 2: Build the RNN(LSTM)
+            cell_layers = _get_lstm_cell(num_layers, lstm_dim, apply_dropout)
             # encoder_outputs has shape [T, N, lstm_dim]
-            encoder_outputs, encoder_states = tf.nn.dynamic_rnn(cell,
-                embedded_seq, seq_length_batch, dtype=tf.float32,
+            encoder_outputs, self.encoder_states = tf.nn.dynamic_rnn(cell_layers,
+                self.embedded_input_seq, seq_length_batch, dtype=tf.float32,
                 time_major=True, scope='lstm')
             self.encoder_outputs = encoder_outputs
-            self.encoder_states = encoder_states
 
-            # transform the encoder outputs for further attention alignments
-            # encoder_outputs_flat has shape [T, N, lstm_dim]
+            # Step 3: Flatten the outputs
+            # adjust the encoder outputs size to batch-like data for decoder usage
             encoder_h_transformed = fc('encoder_h_transform',
-                tl.layers.ReshapeLayer(layer=encoder_outputs, shape=[-1, lstm_dim]).outputs, output_dim=lstm_dim)
-            encoder_h_transformed = tl.layers.ReshapeLayer(encoder_h_transformed,
-                                               to_T([T, N, lstm_dim])).outputs
-            self.encoder_h_transformed = encoder_h_transformed
+                tf.reshape(encoder_outputs, [-1, lstm_dim]), output_dim=lstm_dim)
+            # reshape the flattened encoder to [T, N, lstm_dim]
+            self.encoder_h_transformed = tf.reshape(encoder_h_transformed,
+                                               to_T([self.T_encoder, self.N, lstm_dim]))
 
             # seq_not_finished is a shape [T, N, 1] tensor, where seq_not_finished[t, n]
             # is 1 iff sequence n is not finished at time t, and 0 otherwise
-            seq_not_finished = tf.less(tf.range(T)[:, tf.newaxis, tf.newaxis],
+            seq_not_finished = tf.less(tf.range(self.T_encoder)[:, tf.newaxis, tf.newaxis],
                                        seq_length_batch[:, tf.newaxis])
-            seq_not_finished = tf.cast(seq_not_finished, tf.float32)
-            self.seq_not_finished = seq_not_finished
+            self.seq_not_finished = tf.cast(seq_not_finished, tf.float32)
 
-    def _build_decoder(self, use_gt_layout, gt_layout_batch, scope='decoder',
+    def _build_decoder(self, gt_layout_batch, scope='decoder',
         reuse=None):
-        # The main difference from before is that the decoders now takes another
-        # input (the attention) when computing the next step
-        # T_max is the maximum length of decoded sequence (including <eos>)
-        #
+
         # This function is for decoding only. It performs greedy search or sampling.
-        # the first input is <go> (its embedding vector) and the subsequent inputs
-        # are the outputs from previous time step
+        # The first input is <go> (its embedding vector) ,and the subsequent inputs
+        # are the outputs from previous time step (implementing attention).
+        # 
+        # T_max is the maximum length of decoded sequence (including <eos>)
         # num_vocab does not include <go>
-        #
-        # use_gt_layout is None or a bool tensor, and gt_layout_batch is a tensor
-        # with shape [T_max, N].
-        # If use_gt_layout is not None, then when use_gt_layout is true, predict
-        # exactly the tokens in gt_layout_batch, regardless of actual probability.
-        # Otherwise, if sampling is True, sample from the token probability
-        # If sampling is False, do greedy decoding (beam size 1)
+
         N = self.N
         encoder_states = self.encoder_states
         T_max = self.T_decoder
@@ -128,8 +129,7 @@ class AttentionSeq2Seq:
         with tf.variable_scope(scope, reuse=reuse):
             embedding_mat = tf.get_variable('embedding_mat',
                 [self.decoder_num_vocab, self.decoder_embed_dim])
-            # we use a separate embedding for <go>, as it is only used in the
-            # beginning of the sequence
+            # Special embeddign for <go>, which denotes seq start
             go_embedding = tf.get_variable('go_embedding', [1, self.decoder_embed_dim])
 
             with tf.variable_scope('att_prediction'):
@@ -146,19 +146,12 @@ class AttentionSeq2Seq:
                 b_y = tf.get_variable('biases', self.decoder_num_vocab,
                     initializer=tf.constant_initializer(0.))
 
-            # Attentional decoding
-            # Loop function is called at time t BEFORE the cell execution at time t,
-            # and its next_input is used as the input at time t (not t+1)
-            # c.f. https://www.tensorflow.org/api_docs/python/tf/nn/raw_rnn
             mask_range = tf.reshape(
-                tf.range(self.decoder_num_vocab, dtype=tf.int32),
-                [1, -1])
+                tf.range(self.decoder_num_vocab, dtype=tf.int32), [1, -1])
             all_eos_pred = EOS_token * tf.ones(to_T([N]), tf.int32)
             all_one_prob = tf.ones(to_T([N]), tf.float32)
             all_zero_entropy = tf.zeros(to_T([N]), tf.float32)
-            if use_gt_layout is not None:   # 1/0 to decide whether to use gt or pred layout
-                gt_layout_mult = tf.cast(use_gt_layout, tf.int32)
-                pred_layout_mult = 1 - gt_layout_mult
+
             def loop_fn(time, cell_output, cell_state, loop_state):
                 if cell_output is None:  # time == 0
                     next_cell_state = encoder_states
@@ -192,9 +185,7 @@ class AttentionSeq2Seq:
                     else:
                         # predicted_token has shape [N]
                         predicted_token = tf.cast(tf.argmax(token_scores, 1), tf.int32)
-                    if use_gt_layout is not None:
-                        predicted_token = (gt_layout_batch[time-1] * gt_layout_mult
-                                           + predicted_token * pred_layout_mult)
+                    predicted_token = gt_layout_batch[time-1]
 
                     # token_prob has shape [N], the probability of the predicted token
                     # although token_prob is not needed for predicting the next token
@@ -258,16 +249,15 @@ class AttentionSeq2Seq:
                         next_loop_state)
 
             # The RNN
-            cell = _get_lstm_cell(num_layers, lstm_dim, apply_dropout)
-            _, _, decodes_ta = tf.nn.raw_rnn(cell, loop_fn, scope='lstm')
+            cell_layers = _get_lstm_cell(num_layers, lstm_dim, apply_dropout)
+            _, _, decodes_ta = tf.nn.raw_rnn(cell_layers, loop_fn, scope='lstm')
             predicted_tokens = decodes_ta[0].stack()
             token_probs = decodes_ta[1].stack()
             neg_entropy = decodes_ta[3]
             # atts has shape [T_decoder, T_encoder, N, 1]
-            atts = decodes_ta[4].stack()
-            self.atts = atts
+            self.atts = decodes_ta[4].stack()
             # word_vec has shape [T_decoder, N, 1]
-            word_vecs = tf.reduce_sum(atts*self.embedded_input_seq, axis=1)
+            word_vecs = tf.reduce_sum(self.atts*self.embedded_input_seq, axis=1)
 
             predicted_tokens.set_shape([None, None])
             token_probs.set_shape([None, None])

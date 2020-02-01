@@ -121,7 +121,6 @@ seq_length_batch = tf.placeholder(tf.int32, [None])
 image_batch = tf.placeholder(tf.float32, [None, H_im, W_im, 3])
 expr_validity_batch = tf.placeholder(tf.bool, [None])
 vqa_label_batch = tf.placeholder(tf.int32, [None])
-use_gt_layout = tf.constant(True, dtype=tf.bool)
 gt_layout_batch = tf.placeholder(tf.int32, [None, None])
 
 # The model
@@ -134,7 +133,7 @@ nmn3_model = NMN3ModelAtt(image_batch, text_seq_batch,
     encoder_dropout=encoder_dropout,
     decoder_dropout=decoder_dropout,
     decoder_sampling=decoder_sampling,
-    num_choices=num_choices, use_gt_layout=use_gt_layout,
+    num_choices=num_choices, 
     gt_layout_batch=gt_layout_batch)
 
 compiler = nmn3_model.compiler
