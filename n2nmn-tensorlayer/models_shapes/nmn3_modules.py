@@ -2,10 +2,11 @@ from __future__ import absolute_import, division, print_function
 
 import numpy as np
 import tensorflow as tf
-import tensorlayer as tl
 from tensorflow import convert_to_tensor as to_T
-
+import tensorflow_fold as td
+from models_shapes import nmn3_assembler
 from util.cnn import fc_layer as fc, conv_layer as conv
+from util.empty_safe_conv import empty_safe_1x1_conv as _1x1_conv, empty_safe_conv as  _conv, _Conv2DGrad as _Conv2DGrad
 
 class Modules:
     def __init__(self, image_feat_grid, word_vecs, num_choices):
@@ -13,162 +14,52 @@ class Modules:
         self.word_vecs = word_vecs
         self.num_choices = num_choices
 
-    def _slice_image_feat_grid(self, batch_idx):
-        # this callable will be wrapped into a td.Function
-        # In TF Fold, batch_idx is a [N_batch, 1] tensor
-        return tf.gather(self.image_feat_grid, batch_idx)
-
-    def _slice_word_vecs(self, time_idx, batch_idx):
-        # this callable will be wrapped into a td.Function
-        # In TF Fold, batch_idx and time_idx are both [N_batch, 1] tensors
-        # time is highest dim in word_vecs
-        joint_index = tf.stack([time_idx, batch_idx], axis=1)
-        return tf.gather_nd(self.word_vecs, joint_index)
+    def _1x1_(self, fctext, text_param, N, x,map_dim=500):
+        text_param_mapped = fc(fctext, text_param, output_dim=map_dim)
+        text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
+        eltwise_mult = tf.nn.l2_normalize(x * text_param_mapped, 3)
+        att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
+        return att_grid
 
     # All the layers are wrapped with td.ScopedLayer
     def FindModule(self, time_idx, batch_idx, map_dim=500, scope='FindModule',
         reuse=None):
-        # In TF Fold, batch_idx and time_idx are both [N_batch, 1] tensors
 
-        image_feat_grid = self._slice_image_feat_grid(batch_idx)
-        text_param = self._slice_word_vecs(time_idx, batch_idx)
-        # Mapping: image_feat_grid x text_param -> att_grid
-        # Input:
-        #   image_feat_grid: [N, H, W, D_im]
-        #   text_param: [N, D_txt]
-        # Output:
-        #   att_grid: [N, H, W, 1]
-        #
-        # Implementation:
-        #   1. Elementwise multiplication between image_feat_grid and text_param
-        #   2. L2-normalization
-        #   3. Linear classification
+        image_feat_grid = tf.gather(self.image_feat_grid, batch_idx)
+        text_param = tf.gather_nd(self.word_vecs, tf.stack([time_idx, batch_idx], axis=1))
         with tf.variable_scope(scope, reuse=reuse):
-            image_shape = tf.shape(image_feat_grid)
             N = tf.shape(time_idx)[0]
-            H = image_shape[1]
-            W = image_shape[2]
-            D_im = image_feat_grid.get_shape().as_list()[-1]
-            D_txt = text_param.get_shape().as_list()[-1]
-
-            # image_feat_mapped has shape [N, H, W, map_dim]
             image_feat_mapped = _1x1_conv('conv_image', image_feat_grid,
                                           output_dim=map_dim)
 
-            text_param_mapped = fc('fc_text', text_param, output_dim=map_dim)
-            text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
-#########################
-            #eltwise_mult = tf.nn.l2_normalize(image_feat_mapped * text_param_mapped, 3)
-            #with ops.name_scope(name, "l2_normalize", [x]) as name:
-            x=image_feat_mapped * text_param_mapped
-            square_sum = math_ops.reduce_sum(math_ops.square(x), 3, keep_dims=True)
-            x_inv_norm = math_ops.rsqrt(math_ops.maximum(square_sum, 1e-12))
-            eltwise_mult = math_ops.multiply(x, x_inv_norm,name=None)
-            att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
-
-            # TODO
-            # Do we need to take exponential over the scores?
-            # No.
-            # Does the attention needs to be normalized? (sum up to 1)
-            # No, since non-existence should be 0 everywhere
+            att_grid = self._1x1_('fc_text', text_param, N, image_feat_mapped, map_dim)
 
         return att_grid
 
-    def TransformModule(self, input_0, time_idx, batch_idx, kernel_size=3,
-        map_dim=500, scope='TransformModule', reuse=None):
-        # In TF Fold, batch_idx and time_idx are both [N_batch, 1] tensors
+    def TransformModule(self, input_0, time_idx, batch_idx, kernel_size=3, map_dim=500, scope='TransformModule', reuse=None):
 
-        att_grid = input_0
-        text_param = self._slice_word_vecs(time_idx, batch_idx)
-        # Mapping: att_grid x text_param -> att_grid
-        # Input:
-        #   att_grid: [N, H, W, 1]
-        #   text_param: [N, D_txt]
-        # Output:
-        #   att_grid_transformed: [N, H, W, 1]
-        #
-        # Implementation:
-        #   Convolutional layer that also involve text_param
-        #   A 'soft' convolutional kernel that is modulated by text_param
+        text_param = tf.gather_nd(self.word_vecs, tf.stack([time_idx, batch_idx], axis=1))
         with tf.variable_scope(scope, reuse=reuse):
-            att_shape = tf.shape(att_grid)
+            att_shape = tf.shape(input_0)
             N = att_shape[0]
-            H = att_shape[1]
-            W = att_shape[2]
-            att_maps = _conv('conv_maps', att_grid, kernel_size=kernel_size,
+            att_maps = _conv('conv_maps', input_0, kernel_size=kernel_size,
                 stride=1, output_dim=map_dim)
 
-            text_param_mapped = fc('text_fc', text_param, output_dim=map_dim)
-            text_param_mapped = tf.reshape(text_param_mapped, to_T([N, 1, 1, map_dim]))
-
-######################
-            #eltwise_mult = tf.nn.l2_normalize(att_maps * text_param_mapped, 3)
-            x=att_maps * text_param_mapped
-            square_sum = math_ops.reduce_sum(math_ops.square(x), 3, keep_dims=True)
-            x_inv_norm = math_ops.rsqrt(math_ops.maximum(square_sum, 1e-12))
-            eltwise_mult = math_ops.multiply(x, x_inv_norm,name=None)
-            att_grid = _1x1_conv('conv_eltwise', eltwise_mult, output_dim=1)
+            att_grid = self._1x1_('text_fc', text_param, N, att_maps,map_dim)
 
         return att_grid
 
-    def AndModule(self, input_0, input_1, time_idx, batch_idx,
-        scope='AndModule', reuse=None):
-        # In TF Fold, batch_idx and time_idx are both [N_batch, 1] tensors
+    def AndModule(self, input_0, input_1, time_idx, batch_idx,scope='AndModule', reuse=None):
 
-        att_grid_0 = input_0
-        att_grid_1 = input_1
-        # Mapping: att_grid x att_grid -> att_grid
-        # Input:
-        #   att_grid_0: [N, H, W, 1]
-        #   att_grid_1: [N, H, W, 1]
-        # Output:
-        #   att_grid_and: [N, H, W, 1]
-        #
-        # Implementation:
-        #   Take the elementwise-min
+        return tf.minimum(input_0, input_1)
+
+
+    def AnswerModule(self, input_0, time_idx, batch_idx, scope='AnswerModule', reuse=None):
+
         with tf.variable_scope(scope, reuse=reuse):
-            att_grid_and = tf.minimum(att_grid_0, att_grid_1)
-
-        return att_grid_and
-
-    def AnswerModule(self, input_0, time_idx, batch_idx,
-        scope='AnswerModule', reuse=None):
-        # In TF Fold, batch_idx and time_idx are both [N_batch, 1] tensors
-
-        att_grid = input_0
-        # Mapping: att_grid -> answer probs
-        # Input:
-        #   att_grid: [N, H, W, 1]
-        # Output:
-        #   answer_scores: [N, self.num_choices]
-        #
-        # Implementation:
-        #   1. Max-pool over att_grid
-        #   2. a linear mapping layer (without ReLU)
-        with tf.variable_scope(scope, reuse=reuse):
-            att_shape = tf.shape(att_grid)
-            N = att_shape[0]
-            H = att_shape[1]
-            W = att_shape[2]
-##################
-            #att_min = tf.reduce_min(att_grid, axis=[1, 2])
-            att_min = gen_math_ops._min(
-                att_grid,
-                _ReductionDims(att_grid, [1, 2], None),
-                False,
-                None)
-            #att_avg = tf.reduce_mean(att_grid, axis=[1, 2])
-            att_avg = gen_math_ops._mean(
-                att_grid,
-                _ReductionDims(att_grid, [1, 2], None),
-                False,
-                None)
-            #att_max = tf.reduce_max(att_grid, axis=[1, 2])
-            att_max = gen_math_ops._max(
-                att_grid,
-                _ReductionDims(att_grid, [1, 2], None),
-                False,
-                None)
+            att_min = tf.reduce_min(input_0, axis=[1, 2])
+            att_avg = tf.reduce_mean(input_0, axis=[1, 2])
+            att_max = tf.reduce_max(input_0, axis=[1, 2])
             # att_reduced has shape [N, 3]
             att_reduced = tf.concat([att_min, att_avg, att_max], axis=1)
             scores = fc('fc_scores', att_reduced, output_dim=self.num_choices)
@@ -176,81 +67,52 @@ class Modules:
         return scores
 
 
-def _1x1_conv(name, bottom, output_dim, reuse=None):
-    # TensorFlow Fold can generate zero-size batch for conv layer
-    # which will crash cuDNN on backward pass. So use this
-    # for 1x1 convolution in modules to avoid the crash.
-    bottom_shape = tf.shape(bottom)
-    N = bottom_shape[0]
-    H = bottom_shape[1]
-    W = bottom_shape[2]
-    input_dim = bottom.get_shape().as_list()[-1]
-    bottom_flat = tf.reshape(bottom, [-1, input_dim])
+    def do_recur(self):
+        # This does Recursion of the FindModule & TransformModule & AndModule
+        att_shape = self.image_feat_grid.get_shape().as_list()[1:-1] + [1]
 
-    # weights and biases variables
-    with tf.variable_scope(name, reuse=reuse):
-        # initialize the variables
-        weights_initializer = tf.contrib.layers.xavier_initializer()
-        biases_initializer = tf.constant_initializer(0.)
-        weights = tf.get_variable('weights', [input_dim, output_dim],
-            initializer=weights_initializer)
-        biases = tf.get_variable('biases', output_dim,
-            initializer=biases_initializer)
+        # Forward declaration of module recursion
+        att_expr_decl = td.ForwardDeclaration(td.PyObjectType(), td.TensorType(att_shape))
 
-        #conv_flat = tf.nn.xw_plus_b(bottom_flat, weights, biases)
-        #with ops.name_scope(name, "xw_plus_b", [x, weights, biases]) as name:
-###################
-        bottom_flat = ops.convert_to_tensor(bottom_flat, name="bottom_flat")
-        weights = ops.convert_to_tensor(weights, name="weights")
-        biases = ops.convert_to_tensor(biases, name="biases")
-        mm = math_ops.matmul(bottom_flat, weights)
-        conv_flat = bias_add(mm, biases, name=name)
-        conv = tf.reshape(conv_flat, to_T([N, H, W, output_dim]))
+        # FindModule
+        fl_find = td.Record([('time_idx', td.Scalar(dtype='int32')),
+                             ('batch_idx', td.Scalar(dtype='int32'))])
+        fl_find = fl_find >> \
+                  td.ScopedLayer(self.FindModule, name_or_scope='FindModule')
 
-    return conv
+        # TransformModule
+        fl_transform = td.Record([('input_0', att_expr_decl()),
+                                  ('time_idx', td.Scalar('int32')),
+                                  ('batch_idx', td.Scalar('int32'))])
+        fl_transform = fl_transform >> \
+                       td.ScopedLayer(self.TransformModule, name_or_scope='TransformModule')
 
-# TensorFlow Fold can generate zero-size batch for conv layer
-# which will crash cuDNN on backward pass. So use this
-# for arbitrary convolution in modules to avoid the crash.
-def _conv(name, bottom, kernel_size, stride, output_dim, padding='SAME',
-          bias_term=True, weights_initializer=None,
-          biases_initializer=None, reuse=None):
-    g = tf.get_default_graph()
-    with g.gradient_override_map({'Conv2D': 'Conv2D_handle_empty_batch'}):
-        return conv(name, bottom, kernel_size, stride, output_dim,
-                    padding, bias_term, weights_initializer,
-                    biases_initializer, reuse=reuse)
+        # AndModule
+        fl_and = td.Record([('input_0', att_expr_decl()),
+                            ('input_1', att_expr_decl()),
+                            ('time_idx', td.Scalar('int32')),
+                            ('batch_idx', td.Scalar('int32'))])
+        fl_and = fl_and >> \
+                 td.ScopedLayer(self.AndModule, name_or_scope='AndModule')
 
-@tf.RegisterGradient('Conv2D_handle_empty_batch')
-def _Conv2DGrad(op, grad):
-    with tf.device('/cpu:0'):
-        return [tf.nn.conv2d_backprop_input(#计算相对于输入的卷积梯度.
-                tf.shape(op.inputs[0]), op.inputs[1], grad, op.get_attr('strides'),
-                op.get_attr('padding'), op.get_attr('use_cudnn_on_gpu'),
-                op.get_attr('data_format')),
-                tf.nn.conv2d_backprop_filter(op.inputs[0],#计算相对于滤波器的卷积梯度.
-                                             tf.shape(op.inputs[1]), grad,
-                                             op.get_attr('strides'),
-                                             op.get_attr('padding'),
-                                             op.get_attr('use_cudnn_on_gpu'),
-                                             op.get_attr('data_format'))]
-# def _Conv2DGrad(op, grad):
-#     def _input_nonempty():
-#         return tf.nn.conv2d_backprop_input(
-#             tf.shape(op.inputs[0]), op.inputs[1], grad, op.get_attr('strides'),
-#             op.get_attr('padding'), op.get_attr('use_cudnn_on_gpu'),
-#             op.get_attr('data_format'))
-#     def _filter_nonempty():
-#         return tf.nn.conv2d_backprop_filter(op.inputs[0],
-#                                             tf.shape(op.inputs[1]), grad,
-#                                             op.get_attr('strides'),
-#                                             op.get_attr('padding'),
-#                                             op.get_attr('use_cudnn_on_gpu'),
-#                                             op.get_attr('data_format'))
-#     def _input_empty():
-#         return tf.zeros_like(op.inputs[0])
-#     def _filter_empty():
-#         return tf.zeros_like(op.inputs[1])
-#     is_nonempty = tf.greater(tf.size(op.inputs[0]), 0)
-#     return [tf.cond(is_nonempty, _input_empty, _input_empty),
-#             tf.cond(is_nonempty, _filter_empty, _filter_empty)]
+        recursion_result = td.OneOf(td.GetItem('module'),
+                                    {'_Find': fl_find,
+                                     '_Transform': fl_transform,
+                                     '_And': fl_and})
+        att_expr_decl.resolve_to(recursion_result)
+        return recursion_result
+
+    def get_output_scores(self, recursion_result):
+        # For valid expressions, output scores for choice with AnswerModule
+        predicted_scores = td.Record([('input_0', recursion_result),
+                                      ('time_idx', td.Scalar('int32')),
+                                      ('batch_idx', td.Scalar('int32'))])
+        predicted_scores = predicted_scores >> \
+                           td.ScopedLayer(self.AnswerModule, name_or_scope='AnswerModule')
+
+        # For invalid expressions, define a dummy answer so that all answers have the same form
+        dummy_scores = td.Void() >> td.FromTensor(np.zeros(self.num_choices, np.float32))
+        output_scores = td.OneOf(td.GetItem('module'),
+                                 {'_Answer': predicted_scores,
+                                  nmn3_assembler.INVALID_EXPR: dummy_scores})
+        return output_scores
