@@ -16,8 +16,7 @@ class NMN3ModelAtt:
     def __init__(self, image_batch, text_seq_batch, seq_length_batch,T_decoder, 
         num_vocab_txt, embed_dim_txt, num_vocab_nmn,embed_dim_nmn, lstm_dim, 
         num_layers, EOS_idx, encoder_dropout, decoder_dropout, decoder_sampling,
-        num_choices, gt_layout_batch=None,
-        scope='neural_module_network', reuse=None):
+        num_choices, gt_layout_batch=None, scope='neural_module_network', reuse=None):
 
         with tf.variable_scope(scope, reuse=reuse):
 
