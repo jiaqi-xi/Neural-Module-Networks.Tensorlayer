@@ -1,7 +1,7 @@
 from __future__ import absolute_import, division, print_function
 import sys
 
-print("------------------------------" + " cnn.py " + sys._getframe().f_lineno + "------------------------------")
+print("------------------------------" + " cnn.py " + str(sys._getframe().f_lineno) + "------------------------------")
 
 import tensorflow as tf
 import tensorlayer as tl
@@ -34,22 +34,35 @@ def conv_layer(name, bottom, kernel_size, stride, output_dim, padding='SAME',
         if not reuse:
             tf.add_to_collection(tf.GraphKeys.REGULARIZATION_LOSSES,
                                  tf.nn.l2_loss(weights))
-
     
-    #conv = tf.nn.conv2d(bottom, filter=weights,
-          #strides=[1, stride, stride, 1], padding=padding)
-    #if bias_term:
-        #conv = tf.nn.bias_add(conv, biases)
+    conv = tf.nn.conv2d(bottom, filter=weights,
+          strides=[1, stride, stride, 1], padding=padding)
+    if bias_term:
+        conv = tf.nn.bias_add(conv, biases)
+    print(str(bias_term) + '\n')
+    print(bottom)
+    print('\n')
+    print("------------------------------" + " cnn.py " + str(sys._getframe().f_lineno) + "------------------------------")
 
-    bottom = tl.layers.InputLayer(inputs=bottom, name=name+'input')
-    conv = tl.layers.Conv2dLayer(bottom, act=tf.identify,
-                                shape=[kernel_size, kernel_size, output_dim, input_dim],
+    '''
+    net_l = tl.layers.InputLayer(inputs=bottom, name=name+'input')
+    
+    print("------------------------------" + " cnn.py " + str(sys._getframe().f_lineno) + "------------------------------")
+
+    conv_l = tl.layers.Conv2dLayer(net_l, act=tf.identity,
+                                shape=[kernel_size, kernel_size, input_dim, output_dim],
                                 strides=[1, stride, stride, 1],
                                 padding=padding,
                                 W_init=weights_initializer, b_init=biases_initializer,
-                                name=name+'con2dlayer'
+                                name=name+'convlayer'
                                 )
+    # 1.4.1 不同于 1.5.0 没有 use_cudnn_on_gpu 和 data_format 两个参数
 
+    print("------------------------------" + " cnn.py " + str(sys._getframe().f_lineno) + "------------------------------")
+    print(conv_l.outputs)
+    print("------------------------------")
+    '''
+    print(conv)
     return conv
 
 def conv_relu_layer(name, bottom, kernel_size, stride, output_dim, padding='SAME',
@@ -57,6 +70,8 @@ def conv_relu_layer(name, bottom, kernel_size, stride, output_dim, padding='SAME
     conv = conv_layer(name, bottom, kernel_size, stride, output_dim, padding,
                       bias_term, weights_initializer, biases_initializer, reuse=reuse)
     # print(type(conv))
+    print("------------------------------" + " cnn.py " + str(sys._getframe().f_lineno) + "------------------------------")
+
     relu = tf.nn.relu(conv)
     return relu
 
@@ -85,10 +100,10 @@ def deconv_layer(name, bottom, kernel_size, stride, output_dim, padding='SAME',
         if not reuse:
             tf.add_to_collection(tf.GraphKeys.REGULARIZATION_LOSSES,
                                  tf.nn.l2_loss(weights))
-    print("------------------------------" + " cnn.py " + sys._getframe().f_lineno + "------------------------------")
+    print("------------------------------" + " cnn.py " + str(sys._getframe().f_lineno) + "------------------------------")
     net = tl.layers.InputLayer(inputs=bottom, name=name+'input')
 
-    print("------------------------------" + " cnn.py " + sys._getframe().f_lineno + "------------------------------")
+    print("------------------------------" + " cnn.py " + str(sys._getframe().f_lineno) + "------------------------------")
     
     deconv = tl.layers.DeConv2dLayer(net, act=tf.identity, shape=[kernel_size, kernel_size, output_dim, input_dim],
                                output_shape=output_shape, strides=[1, stride, stride, 1],
