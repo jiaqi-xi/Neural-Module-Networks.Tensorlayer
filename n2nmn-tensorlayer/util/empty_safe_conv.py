@@ -1,21 +1,15 @@
 from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
-import tensorlayer as tl
+import numpy as np
 from tensorflow import convert_to_tensor as to_T
 
 from util.cnn import conv_layer as conv
 
 def empty_safe_1x1_conv(name, bottom, output_dim, reuse=None):
-    # TensorFlow Fold can generate zero-size batch for conv layer
-    # which will crash cuDNN on backward pass. So use this
-    # for 1x1 convolution in modules to avoid the crash.
+    # use this for 1x1 convolution in modules to avoid the crash.
     bottom_shape = tf.shape(bottom)
-    N = bottom_shape[0]
-    H = bottom_shape[1]
-    W = bottom_shape[2]
     input_dim = bottom.get_shape().as_list()[-1]
-    bottom_flat = tf.reshape(bottom, [-1, input_dim])
 
     # weights and biases variables
     with tf.variable_scope(name, reuse=reuse):
@@ -27,14 +21,12 @@ def empty_safe_1x1_conv(name, bottom, output_dim, reuse=None):
         biases = tf.get_variable('biases', output_dim,
             initializer=biases_initializer)
 
-        conv_flat = tf.nn.xw_plus_b(bottom_flat, weights, biases)
-        conv = tf.reshape(conv_flat, to_T([N, H, W, output_dim]))
+        conv_flat = tf.matmul(tf.reshape(bottom, [-1, input_dim]), weights) + biases
+        conv = tf.reshape(conv_flat, to_T([bottom_shape[0], bottom_shape[1], bottom_shape[2], output_dim]))
 
     return conv
 
-# TensorFlow Fold can generate zero-size batch for conv layer
-# which will crash cuDNN on backward pass. So use this
-# for arbitrary convolution in modules to avoid the crash.
+#  use this for arbitrary convolution in modules to avoid the crash.
 def empty_safe_conv(name, bottom, kernel_size, stride, output_dim, padding='SAME',
           bias_term=True, weights_initializer=None,
           biases_initializer=None, reuse=None):
@@ -47,34 +39,10 @@ def empty_safe_conv(name, bottom, kernel_size, stride, output_dim, padding='SAME
 @tf.RegisterGradient('Conv2D_handle_empty_batch')
 def _Conv2DGrad(op, grad):
     with tf.device('/cpu:0'):
-        return [tf.nn.conv2d_backprop_input(
-                tf.shape(op.inputs[0]), op.inputs[1], grad, op.get_attr('strides'),
-                op.get_attr('padding'), op.get_attr('use_cudnn_on_gpu'),
-                op.get_attr('data_format')),
-                tf.nn.conv2d_backprop_filter(op.inputs[0],
-                                             tf.shape(op.inputs[1]), grad,
-                                             op.get_attr('strides'),
-                                             op.get_attr('padding'),
-                                             op.get_attr('use_cudnn_on_gpu'),
-                                             op.get_attr('data_format'))]
-# @tf.RegisterGradient('Conv2D_handle_empty_batch')
-# def _Conv2DGrad(op, grad):
-#     def _input_nonempty():
-#         return tf.nn.conv2d_backprop_input(
-#             tf.shape(op.inputs[0]), op.inputs[1], grad, op.get_attr('strides'),
-#             op.get_attr('padding'), op.get_attr('use_cudnn_on_gpu'),
-#             op.get_attr('data_format'))
-#     def _filter_nonempty():
-#         return tf.nn.conv2d_backprop_filter(op.inputs[0],
-#                                             tf.shape(op.inputs[1]), grad,
-#                                             op.get_attr('strides'),
-#                                             op.get_attr('padding'),
-#                                             op.get_attr('use_cudnn_on_gpu'),
-#                                             op.get_attr('data_format'))
-#     def _input_empty():
-#         return tf.zeros_like(op.inputs[0])
-#     def _filter_empty():
-#         return tf.zeros_like(op.inputs[1])
-#     is_nonempty = tf.greater(tf.size(op.inputs[0]), 0)
-#     return [tf.cond(is_nonempty, _input_nonempty, _input_empty),
-#             tf.cond(is_nonempty, _filter_nonempty, _filter_empty)]
+        filter_grad = tf.nn.conv2d_backprop_input(  # 计算卷积相对于过滤器的梯度
+            tf.shape(op.inputs[0]), op.inputs[1], grad, op.get_attr('strides'),
+            op.get_attr('padding'), op.get_attr('use_cudnn_on_gpu'), op.get_attr('data_format'))
+        input_grad = tf.nn.conv2d_backprop_filter(  # 计算卷积相对于输入的梯度
+            op.inputs[0],  tf.shape(op.inputs[1]), grad, op.get_attr('strides'),
+            op.get_attr('padding'),op.get_attr('use_cudnn_on_gpu'), op.get_attr('data_format'))
+        return [filter_grad, input_grad]
