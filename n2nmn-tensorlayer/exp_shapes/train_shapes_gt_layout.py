@@ -22,98 +22,27 @@ import json
 from models_shapes.nmn3_assembler import Assembler
 from models_shapes.nmn3_model import NMN3ModelAtt
 
+# Share parameters
+from params import *
 # Module parameters
-H_im = 30
-W_im = 30
-num_choices = 2
-embed_dim_txt = 300
-embed_dim_nmn = 300
-lstm_dim = 256
-num_layers = 2
 encoder_dropout = True
 decoder_dropout = True
 decoder_sampling = True
-T_encoder = 15
-T_decoder = 11
-N = 256
+
+# Data files
+image_sets = ['train.large', 'train.med', 'train.small', 'train.tiny']
 
 # Training parameters
-weight_decay = 5e-4
-max_grad_l2_norm = 10
-max_iter = 40000
-snapshot_interval = 10000
 exp_name = "shapes_gt_layout"
 snapshot_dir = './exp_shapes/tfmodel/%s/' % exp_name
 
 # Log params
-log_interval = 20
 log_dir = './exp_shapes/tb/%s/' % exp_name
 
-# Data files
-vocab_shape_file = './exp_shapes/data/vocabulary_shape.txt'
-vocab_layout_file = './exp_shapes/data/vocabulary_layout.txt'
-image_sets = ['train.large', 'train.med', 'train.small', 'train.tiny']
-training_text_files = './exp_shapes/shapes_dataset/%s.query_str.txt'
-training_image_files = './exp_shapes/shapes_dataset/%s.input.npy'
-training_label_files = './exp_shapes/shapes_dataset/%s.output'
-training_gt_layout_file = './exp_shapes/data/%s.query_layout_symbols.json'
-image_mean_file = './exp_shapes/data/image_mean.npy'
-
-# Load vocabulary
-with open(vocab_shape_file) as f:
-    vocab_shape_list = [s.strip() for s in f.readlines()]
-vocab_shape_dict = {vocab_shape_list[n]:n for n in range(len(vocab_shape_list))}
-num_vocab_txt = len(vocab_shape_list)
-
-assembler = Assembler(vocab_layout_file)
-num_vocab_nmn = len(assembler.module_names)
-
-# Load training data
-training_questions = []
-training_labels = []
-training_images_list = []
-gt_layout_list = []
-
-for image_set in image_sets:
-    with open(training_text_files % image_set) as f:
-        training_questions += [l.strip() for l in f.readlines()]
-    with open(training_label_files % image_set) as f:
-        training_labels += [l.strip() == 'true' for l in f.readlines()]
-    training_images_list.append(np.load(training_image_files % image_set))
-    with open(training_gt_layout_file % image_set) as f:
-        gt_layout_list += json.load(f)
-
-num_questions = len(training_questions)
-training_images = np.concatenate(training_images_list)
-
-# Shuffle the training data
-# fix random seed for data repeatibility
-np.random.seed(3)
-shuffle_inds = np.random.permutation(num_questions)
-
-training_questions = [training_questions[idx] for idx in shuffle_inds]
-training_labels = [training_labels[idx] for idx in shuffle_inds]
-training_images = training_images[shuffle_inds]
-gt_layout_list = [gt_layout_list[idx] for idx in shuffle_inds]
-
-# number of training batches
-num_batches = np.ceil(num_questions / N)
-
-# Turn the questions into vocabulary indices
-text_seq_array = np.zeros((T_encoder, num_questions), np.int32)
-seq_length_array = np.zeros(num_questions, np.int32)
-gt_layout_array = np.zeros((T_decoder, num_questions), np.int32)
-for n_q in range(num_questions):
-    tokens = training_questions[n_q].split()
-    seq_length_array[n_q] = len(tokens)
-    for t in range(len(tokens)):
-        text_seq_array[t, n_q] = vocab_shape_dict[tokens[t]]
-    gt_layout_array[:, n_q] = assembler.module_list2tokens(
-        gt_layout_list[n_q], T_decoder)
-
-image_mean = np.load(image_mean_file)
-image_array = (training_images - image_mean).astype(np.float32)
-vqa_label_array = np.array(training_labels, np.int32)
+# Preparation
+[num_questions, training_images, num_batches, num_vocab_txt,
+assembler, num_vocab_nmn, text_seq_array, seq_length_array,
+gt_layout_array, image_array, vqa_label_array] = Pre(image_sets)
 
 # Network inputs
 text_seq_batch = tf.placeholder(tf.int32, [None, None])
@@ -122,6 +51,10 @@ image_batch = tf.placeholder(tf.float32, [None, H_im, W_im, 3])
 expr_validity_batch = tf.placeholder(tf.bool, [None])
 vqa_label_batch = tf.placeholder(tf.int32, [None])
 gt_layout_batch = tf.placeholder(tf.int32, [None, None])
+# Prepare for summary
+loss_ph = tf.placeholder(tf.float32, [])
+entropy_ph = tf.placeholder(tf.float32, [])
+accuracy_ph = tf.placeholder(tf.float32, [])
 
 # The model
 nmn3_model = NMN3ModelAtt(image_batch, text_seq_batch,
@@ -167,9 +100,7 @@ with tf.control_dependencies([solver_op]):
 # Write summary to TensorBoard
 os.makedirs(log_dir, exist_ok=True)
 log_writer = tf.summary.FileWriter(log_dir, tf.get_default_graph())
-loss_ph = tf.placeholder(tf.float32, [])
-entropy_ph = tf.placeholder(tf.float32, [])
-accuracy_ph = tf.placeholder(tf.float32, [])
+
 tf.summary.scalar("avg_sample_loss", loss_ph)
 tf.summary.scalar("entropy", entropy_ph)
 tf.summary.scalar("avg_accuracy", accuracy_ph)
@@ -178,7 +109,7 @@ log_step = tf.summary.merge_all()
 os.makedirs(snapshot_dir, exist_ok=True)
 snapshot_saver = tf.train.Saver(max_to_keep=None)  # keep all snapshots
 
-sess.run(tf.global_variables_initializer())
+tl.layers.initialize_global_variables(sess)
 
 avg_accuracy = 0
 accuracy_decay = 0.99
