@@ -1,12 +1,8 @@
 from __future__ import absolute_import, division, print_function
 import sys
 
-print("------------------------------" + " cnn.py " + str(sys._getframe().f_lineno) + "------------------------------")
-
 import tensorflow as tf
 import tensorlayer as tl
-
-print("------------------------------" + " cnn.py " + str(sys._getframe().f_lineno) + "------------------------------")
 
 sess = tf.Session()
 tl.layers.initialize_global_variables(sess)
