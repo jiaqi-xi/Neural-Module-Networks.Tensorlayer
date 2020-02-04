@@ -4,7 +4,7 @@ import tensorflow as tf
 from tensorflow import convert_to_tensor as to_T
 import tensorlayer as tl
 
-from util.cnn import fc_layer as fc, conv_relu_layer as conv_relu
+from models_shapes.nmn3_layers import fc_layer as fc, conv_relu_layer as conv_relu
 
 def _get_lstm_cell(num_layers, lstm_dim, apply_dropout):
 	

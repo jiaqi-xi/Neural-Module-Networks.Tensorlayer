@@ -6,11 +6,10 @@ import tensorlayer as tl
 import tensorflow_fold as td
 from tensorflow import convert_to_tensor as to_T
 
-from models_shapes import nmn3_netgen_att
+from models_shapes import nmn3_seq
 from models_shapes import nmn3_assembler
-from models_shapes.shapes_convnet import shapes_convnet
 from models_shapes.nmn3_modules import Modules
-from util.cnn import fc_layer as fc, conv_layer as conv
+from models_shapes.nmn3_layers import fc_layer as fc, conv_layer as conv, shapes_convnet as shapes_convnet
 
 class NMN3ModelAtt:
     def __init__(self, image_batch, text_seq_batch, seq_length_batch,T_decoder, 
@@ -26,7 +25,7 @@ class NMN3ModelAtt:
 
             # STEP 2: Get module layout tokens by Seq2seq RNN
             with tf.variable_scope('layout_generation'):
-                att_seq2seq = nmn3_netgen_att.AttentionSeq2Seq(text_seq_batch,
+                att_seq2seq = nmn3_seq.AttentionSeq2Seq(text_seq_batch,
                     seq_length_batch, T_decoder, num_vocab_txt,embed_dim_txt, 
                     num_vocab_nmn, embed_dim_nmn, lstm_dim, num_layers, EOS_idx, 
                     encoder_dropout, decoder_dropout, decoder_sampling,  

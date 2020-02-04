@@ -5,8 +5,8 @@ import tensorflow as tf
 from tensorflow import convert_to_tensor as to_T
 import tensorflow_fold as td
 from models_shapes import nmn3_assembler
-from util.cnn import fc_layer as fc, conv_layer as conv
-from util.empty_safe_conv import empty_safe_1x1_conv as _1x1_conv, empty_safe_conv as  _conv, _Conv2DGrad as _Conv2DGrad
+from models_shapes.nmn3_layers import fc_layer as fc, conv_layer as conv,\
+     empty_safe_1x1_conv as _1x1_conv, empty_safe_conv as  _conv, _Conv2DGrad as _Conv2DGrad
 
 class Modules:
     def __init__(self, image_feat_grid, word_vecs, num_choices):
