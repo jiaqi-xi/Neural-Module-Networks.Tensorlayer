@@ -28,7 +28,7 @@ from models_shapes.nmn3_assembler import Assembler
 from models_shapes.nmn3_model import NMN3ModelAtt
 
 # Share parameters
-import params
+from params import *
 # Module parameters
 encoder_dropout = False
 decoder_dropout = False
@@ -43,16 +43,6 @@ image_sets = args.test_split.split(':')
 save_dir = './exp_shapes/results/%s/%s.%s' % (exp_name, snapshot_name, '_'.join(image_sets))
 save_file = save_dir + '.txt'
 os.makedirs(save_dir, exist_ok=True)
-
-
-# Load vocabulary
-with open(vocab_shape_file) as f:
-    vocab_shape_list = [s.strip() for s in f.readlines()]
-vocab_shape_dict = {vocab_shape_list[n]:n for n in range(len(vocab_shape_list))}
-num_vocab_txt = len(vocab_shape_list)
-
-assembler = Assembler(vocab_layout_file)
-num_vocab_nmn = len(assembler.module_names)
 
 # Preparation
 [num_questions, training_images, num_batches, num_vocab_txt,
@@ -107,6 +97,17 @@ for n_iter in range(int(num_batches)):
                    seq_length_batch: seq_length_array[n_begin:n_end],
                    image_batch: image_array[n_begin:n_end]})
 
+    h = None # notice parameter sending
+    [h, (tokens)] = RunNet(Sess=sess,
+                    Fetches=[nmn3_model.predicted_tokens, scores],
+                    Feeds=[text_seq_batch, seq_length_batch, image_batch,
+                    compiler.loom_input_tensor, expr_validity_batch],
+                    Fetches_cur=nmn3_model.predicted_tokens,
+                    Feed_dict={text_seq_batch: text_seq_array[:, n_begin:n_end],
+                    seq_length_batch: seq_length_array[n_begin:n_end],
+                    image_batch: image_array[n_begin:n_end]},
+                    Handle=h)
+
     # compute the accuracy of the predicted layout
     gt_tokens = gt_layout_array[:, n_begin:n_end]
     layout_correct += np.sum(np.all(np.logical_or(tokens == gt_tokens,
@@ -122,7 +123,13 @@ for n_iter in range(int(num_batches)):
     expr_feed[expr_validity_batch] = expr_validity_array
 
     # Part 2: Run NMN and learning steps
-    scores_val = sess.partial_run(h, scores, feed_dict=expr_feed)
+    [h, (scores_val)] = RunNet(Sess=sess,
+                        Fetches=[nmn3_model.predicted_tokens, scores],
+                        Feeds=[text_seq_batch, seq_length_batch, image_batch,
+                        compiler.loom_input_tensor, expr_validity_batch],
+                        Fetches_cur=scoress,
+                        Feed_dict=expr_feed,
+                        Handle=h)
 
     # compute accuracy
     predictions = np.argmax(scores_val, axis=1)

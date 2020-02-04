@@ -21,6 +21,7 @@ import json
 
 from models_shapes.nmn3_assembler import Assembler
 from models_shapes.nmn3_model import NMN3ModelAtt
+from RunNet import *
 
 # Share parameters
 from params import *
@@ -118,20 +119,20 @@ for n_iter in range(max_iter):
     n_begin = int((n_iter % num_batches)*N)
     n_end = int(min(n_begin+N, num_questions))
 
-    # set up input and output tensors
-    h = sess.partial_run_setup(
-        [nmn3_model.predicted_tokens, nmn3_model.entropy_reg,
-         scores, avg_sample_loss, train_step],
-        [text_seq_batch, seq_length_batch, image_batch, gt_layout_batch,
-         compiler.loom_input_tensor, vqa_label_batch])
-
     # Part 0 & 1: Run Convnet and generate module layout
-    tokens, entropy_reg_val = sess.partial_run(h,
-        (nmn3_model.predicted_tokens, nmn3_model.entropy_reg),
-        feed_dict={text_seq_batch: text_seq_array[:, n_begin:n_end],
-                   seq_length_batch: seq_length_array[n_begin:n_end],
-                   image_batch: image_array[n_begin:n_end],
-                   gt_layout_batch: gt_layout_array[:, n_begin:n_end]})
+    h = None # notice parameter sending
+    [h, (tokens, entropy_reg_val)] = RunNet(Sess=sess,
+                                    Fetches=[nmn3_model.predicted_tokens, 
+                                    nmn3_model.entropy_reg, scores, avg_sample_loss, train_step],
+                                    Feeds=[text_seq_batch, seq_length_batch, image_batch,
+                                    gt_layout_batch, compiler.loom_input_tensor, vqa_label_batch],
+                                    Fetches_cur=(nmn3_model.predicted_tokens, nmn3_model.entropy_reg),
+                                    Feed_dict={text_seq_batch: text_seq_array[:, n_begin:n_end],
+                                    seq_length_batch: seq_length_array[n_begin:n_end],
+                                    image_batch: image_array[n_begin:n_end],
+                                    gt_layout_batch: gt_layout_array[:, n_begin:n_end]},
+                                    Handle=h)
+        
     # Assemble the layout tokens into network structure
     expr_list, expr_validity_array = assembler.assemble(tokens)
     # all expr should be valid (since they are ground-truth)
@@ -142,8 +143,14 @@ for n_iter in range(max_iter):
     expr_feed[vqa_label_batch] = labels
 
     # Part 2: Run NMN and learning steps
-    scores_val, avg_sample_loss_val, _ = sess.partial_run(
-        h, (scores, avg_sample_loss, train_step), feed_dict=expr_feed)
+    [h, (scores_val, avg_sample_loss_val, _)] = RunNet(Sess=sess,
+                                    Fetches=[nmn3_model.predicted_tokens, 
+                                    nmn3_model.entropy_reg, scores, avg_sample_loss, train_step],
+                                    Feeds=[text_seq_batch, seq_length_batch, image_batch,
+                                    gt_layout_batch, compiler.loom_input_tensor, vqa_label_batch],
+                                    Fetches_cur=(scores, avg_sample_loss, train_step),
+                                    Feed_dict=expr_feed,
+                                    Handle=h)
 
     # compute accuracy
     predictions = np.argmax(scores_val, axis=1)
