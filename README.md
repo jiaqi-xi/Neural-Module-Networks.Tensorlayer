@@ -5,7 +5,7 @@ A tensorlayer implementation of Neural Module Networks.
 
 ## Learning to Reason: End-to-End Module Networks for Visual Question Answering
 
-This project refered to" [Learning to Reason: End-to-End Module Networks for Visual Question Answering](https://github.com/ronghanghu/n2nmn)" and implemented the model with tensorlayer. It contains the code for the following paper (with tests on the SHAPES dataset):
+This project refered to" [Learning to Reason: End-to-End Module Networks for Visual Question Answering](https://github.com/ronghanghu/n2nmn)". It implemented the model for the SHAPES dataset with tensorlayer, and uses ground-truth layout (behavioral cloning from expert) for training. It is based on the following paper:
 
 * R. Hu, J. Andreas, M. Rohrbach, T. Darrell, K. Saenko, *Learning to Reason: End-to-End Module Networks for Visual Question Answering*. in ICCV, 2017. ([PDF](https://arxiv.org/pdf/1704.05526.pdf))
 ```
@@ -16,7 +16,6 @@ This project refered to" [Learning to Reason: End-to-End Module Networks for Vis
   year={2017}
 }
 ```
-
 
 ## Installation
 
@@ -44,9 +43,6 @@ A copy of the SHAPES dataset is contained in this repository under `exp_shapes/s
 1. Train with ground-truth layout (behavioral cloning from expert):  
 `python exp_shapes/train_shapes_gt_layout.py`  
 
-2. Train without ground-truth layout (policy search from scratch):  
-`python exp_shapes/train_shapes_scratch.py`  
-
 Note: by default, the above scripts use GPU 0. To train on a different GPU, set the `--gpu_id` flag. During training, the script will write TensorBoard events to `exp_shapes/tb/` and save the snapshots under `exp_shapes/tfmodel/`.
 
 ### Test
@@ -54,9 +50,6 @@ Note: by default, the above scripts use GPU 0. To train on a different GPU, set 
 0. Add the root of this repository to PYTHONPATH: `export PYTHONPATH=.:$PYTHONPATH`  
 
 1. Evaluate *shapes_gt_layout* (behavioral cloning from expert):  
-`python exp_shapes/eval_shapes.py --exp_name shapes_gt_layout --snapshot_name 00040000 --test_split test`  
-
-2. Evaluate *shapes_scratch* (policy search from scratch):  
-`python exp_shapes/eval_shapes.py --exp_name shapes_scratch --snapshot_name 00400000 --test_split test`  
+`python exp_shapes/eval_shapes.py --exp_name shapes_gt_layout --snapshot_name 00040000 --test_split test`   
 
 Note: the above evaluation scripts will print out the accuracy and also save it under `exp_shapes/results/`. By default, the above scripts use GPU 0, and evaluate on the *test* split of SHAPES. To evaluate on a different GPU, set the `--gpu_id` flag. To evaluate on the *validation* split, use `--test_split val` instead.
